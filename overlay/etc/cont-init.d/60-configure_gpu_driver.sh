@@ -199,6 +199,27 @@ function install_deb_mesa {
     fi
 }
 
+# The Mesa packages ship the lavapipe (lvp) software Vulkan ICD alongside RADV.
+# Engines that enumerate Vulkan devices (notably UE5 titles) can select the CPU
+# device and crash on startup (EXCEPTION_ACCESS_VIOLATION reading 0x0). On an AMD
+# box the software fallback is never wanted, so disable the lavapipe ICD by default.
+function disable_lavapipe_icd {
+    if [ "${AMD_FORCE_RADV_ICD:-true}" != "true" ]; then
+        print_step_header "Leaving lavapipe (software Vulkan) ICD enabled (AMD_FORCE_RADV_ICD=false)"
+        return 0
+    fi
+    local disabled_any="false"
+    for lvp_icd in /usr/share/vulkan/icd.d/lvp_icd.*.json; do
+        if [ -f "${lvp_icd}" ]; then
+            mv -f "${lvp_icd}" "${lvp_icd}.disabled"
+            disabled_any="true"
+        fi
+    done
+    if [ "${disabled_any}" = "true" ]; then
+        print_step_header "Disabled lavapipe (software Vulkan) ICD so games use RADV (hardware) only"
+    fi
+}
+
 function install_amd_gpu_driver {
     if command -v pacman &>/dev/null; then
         print_step_header "Install AMD Mesa driver"
@@ -210,6 +231,7 @@ function install_amd_gpu_driver {
     elif command -v apt-get &>/dev/null; then
         install_deb_mesa
     fi
+    disable_lavapipe_icd
 }
 
 function install_intel_gpu_driver {

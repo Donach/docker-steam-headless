@@ -15,6 +15,13 @@ export nvidia_gpu_hex_id=$(nvidia-smi --format=csv --query-gpu=pci.bus_id --id="
 
 export monitor_connected=$(cat /sys/class/drm/card*/status | awk '/^connected/ { print $1; }' | head -n1)
 
+# Detect an AMD GPU (only relevant when no NVIDIA device is in use)
+if lspci 2>/dev/null | grep -iE 'vga|display|3d controller' | grep -iqE 'amd/ati|advanced micro devices'; then
+    export amd_gpu_present="true"
+else
+    export amd_gpu_present="false"
+fi
+
 # Fech current configuration (if modified in UI)
 if [ -f "${USER_HOME}/.config/xfce4/xfconf/xfce-perchannel-xml/displays.xml" ]; then
     new_display_sizew=$(cat ${USER_HOME}/.config/xfce4/xfconf/xfce-perchannel-xml/displays.xml | grep Resolution | head -n1 | grep -oP '(?<=value=").*?(?=")' | cut -d'x' -f1)
@@ -55,6 +62,77 @@ function configure_nvidia_x_server {
     sed -i '/Section\s\+"Monitor"/a\    '"${MODELINE}" /etc/X11/xorg.conf
     # Prevent interference between GPUs
     echo -e "Section \"ServerFlags\"\n    Option \"AutoAddGPU\" \"false\"\nEndSection" | tee -a /etc/X11/xorg.conf > /dev/null
+}
+
+# Configure an AMD (amdgpu) X11 config for a hardware-accelerated, headless X server.
+# Without this, AMD GPUs fall through to the software "dummy" driver (llvmpipe) whenever
+# no physical monitor is connected, which breaks GPU rendering for many games (e.g. UE5
+# titles crash with EXCEPTION_ACCESS_VIOLATION when they pick the software device).
+# NOTE: a disconnected output cannot light up on its own. For a truly headless host set
+# a forced mode on the GPU connector via the HOST kernel cmdline, e.g.:
+#     video=DP-1:1920x1080e
+# (or plug in a cheap HDMI/DP dummy adapter). Optionally point AMD_CUSTOM_EDID at an EDID
+# blob and DISPLAY_VIDEO_PORT at the connector to inject an EDID via the DDX driver.
+function configure_amd_x_server {
+    print_step_header "Configuring X11 for AMD GPU (amdgpu)"
+    local amd_pci_addr amd_bus amd_dev amd_func amd_bus_id modeline modename
+
+    # Resolve the AMD VGA controller PCI address (e.g. "0d:00.0")
+    amd_pci_addr="$(lspci 2>/dev/null | grep -iE 'vga|display|3d controller' | grep -iE 'amd/ati|advanced micro devices' | head -n1 | awk '{print $1}')"
+    if [ -z "${amd_pci_addr}" ]; then
+        print_warning "Could not resolve AMD GPU PCI address. Falling back to dummy xorg.conf"
+        cp -f /templates/xorg/xorg.dummy.conf /etc/X11/xorg.conf
+        return 0
+    fi
+
+    # Convert hex PCI address to the decimal "PCI:bus:dev:func" form Xorg expects
+    IFS=':.' read -r amd_bus amd_dev amd_func <<< "${amd_pci_addr}"
+    amd_bus_id="PCI:$((16#${amd_bus})):$((16#${amd_dev})):$((16#${amd_func}))"
+    print_step_header "AMD GPU at ${amd_pci_addr} -> ${amd_bus_id}"
+
+    modeline="$(cvt -r "${DISPLAY_SIZEW:?}" "${DISPLAY_SIZEH:?}" "${DISPLAY_REFRESH:?}" | sed -n 2p)"
+    modename="$(echo "${modeline}" | awk '{print $2}' | tr -d '"')"
+    print_step_header "Writing AMD X11 config with ${modeline}"
+
+    # Optional EDID injection (lets a disconnected port present a monitor to the DDX driver)
+    local edid_option=""
+    if [ -n "${AMD_CUSTOM_EDID:-}" ] && [ -f "${AMD_CUSTOM_EDID}" ] && [ -n "${DISPLAY_VIDEO_PORT:-}" ]; then
+        print_step_header "Using CustomEDID ${DISPLAY_VIDEO_PORT}:${AMD_CUSTOM_EDID}"
+        edid_option="    Option         \"CustomEDID\" \"${DISPLAY_VIDEO_PORT}:${AMD_CUSTOM_EDID}\""
+    fi
+
+    cat > /etc/X11/xorg.conf <<EOF
+Section "ServerFlags"
+    Option         "AutoAddGPU" "false"
+    Option         "DontVTSwitch" "true"
+EndSection
+
+Section "Monitor"
+    Identifier     "Monitor0"
+    ${modeline}
+    Option         "PreferredMode" "${modename}"
+EndSection
+
+Section "Device"
+    Identifier     "AMD"
+    Driver         "amdgpu"
+    BusID          "${amd_bus_id}"
+    Option         "DRI" "3"
+${edid_option}
+EndSection
+
+Section "Screen"
+    Identifier     "Screen0"
+    Device         "AMD"
+    Monitor        "Monitor0"
+    DefaultDepth   ${DISPLAY_CDEPTH:?}
+    SubSection     "Display"
+        Depth      ${DISPLAY_CDEPTH:?}
+        Modes      "${modename}"
+        Virtual    ${DISPLAY_SIZEW:?} ${DISPLAY_SIZEH:?}
+    EndSubSection
+EndSection
+EOF
 }
 
 # Allow anybody for running x server
@@ -114,10 +192,22 @@ function configure_x_server {
     fi
     
     # Configure dummy config if no monitor is connected (not applicable to NVIDIA)
-    if ([ "X${monitor_connected}" = "X" ] || [ "${FORCE_X11_DUMMY_CONFIG}" = "true" ]); then 
-        print_step_header "No monitors connected. Installing dummy xorg.conf"
+    if [ "${FORCE_X11_DUMMY_CONFIG}" = "true" ]; then
+        print_step_header "FORCE_X11_DUMMY_CONFIG=true. Installing dummy xorg.conf"
         # Use a dummy display input
         cp -f /templates/xorg/xorg.dummy.conf /etc/X11/xorg.conf
+    elif [ "X${monitor_connected}" = "X" ]; then
+        # No physical monitor. On AMD, opt in to a real amdgpu X server with
+        # AMD_HW_XORG=true (gives hardware GL instead of software llvmpipe);
+        # otherwise keep the historical dummy/software behaviour.
+        if [ "${amd_gpu_present:-false}" = "true" ] && [ "${AMD_HW_XORG:-false}" = "true" ] && [ -z "${nvidia_gpu_hex_id}" ]; then
+            print_step_header "No monitors connected. AMD_HW_XORG enabled; using amdgpu xorg.conf"
+            configure_amd_x_server
+        else
+            print_step_header "No monitors connected. Installing dummy xorg.conf"
+            # Use a dummy display input
+            cp -f /templates/xorg/xorg.dummy.conf /etc/X11/xorg.conf
+        fi
     fi
 }
 
