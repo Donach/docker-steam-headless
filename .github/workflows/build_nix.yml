@@ -1,49 +1,92 @@
 name: Build Image (NixOS)
 
 # Builds both image flavours on a self-hosted NixOS runner using the toolchain
-# pinned by ./flake.nix. The flake provides docker/buildx/qemu; the runner host
-# provides the docker daemon.
+# pinned by ./flake.nix, then publishes each image as a Forgejo *generic package*
+# (a gzipped `docker save` tarball). The container registry is not used because
+# this Forgejo instance is served under the /donach subpath, which the Docker
+# registry protocol cannot address; the generic-package API works fine there.
+#
+# Pull on the target host (e.g. Unraid):
+#   curl -fSL -H "Authorization: token <TOKEN>" \
+#     https://git.bitp.cz/donach/api/v1/packages/donach/generic/steam-headless/amd-fix/steam-headless-debian.tar.gz \
+#     | gunzip | docker load
 
 on:
   workflow_dispatch:
   push:
     branches: ['amd-gpu-support', 'master']
 
+permissions:
+  contents: read
+  packages: write
+
 env:
-  # Enable flakes regardless of the runner's nix.conf.
-  NIX_CMD: nix --extra-experimental-features "nix-command flakes"
+  # Enable flakes regardless of the runner's nix.conf (avoids quoting a CLI flag).
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+  # Forgejo is served under this subpath; HTTP repo + API base must include it.
+  FORGEJO_BASE: https://git.bitp.cz/donach
+  PKG_OWNER: donach
+  PKG_NAME: steam-headless
+  PKG_VERSION: amd-fix
 
 jobs:
   build-nix-debian:
     name: Build debian image (NixOS)
     runs-on: nix-shell-glcom
+    env:
+      FLAVOUR: debian
+      IMAGE: steam-headless
+      TAG: amd-fix-debian
+      PLATFORM: linux/amd64
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout (manual; instance served under /donach subpath)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          base="${GITHUB_SERVER_URL}"
+          case "${base}" in *git.bitp.cz*) base="${FORGEJO_BASE}" ;; esac
+          git init -q .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@${base#https://}/${GITHUB_REPOSITORY}.git"
+          git -c protocol.version=2 fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
 
       - name: Show pinned build environment
-        run: $NIX_CMD develop --command bash -c 'docker --version; docker buildx version'
+        run: nix develop --command bash -c 'docker --version; docker buildx version'
 
-      - name: Build debian image
+      - name: Build image (loads steam-headless:amd-fix-debian into local docker)
+        run: nix run .#build-debian
+
+      - name: Publish image tarball as a Forgejo generic package
         env:
-          IMAGE: steam-headless
-          TAG: amd-fix-debian
-          PLATFORM: linux/amd64
-          # Set PUSH=true (and log in to a registry beforehand) to publish.
-          PUSH: 'false'
-        run: $NIX_CMD run .#build-debian
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+        run: nix run .#publish
 
   build-nix-arch:
     name: Build arch image (NixOS)
     runs-on: nix-shell-glcom
+    env:
+      FLAVOUR: arch
+      IMAGE: steam-headless
+      TAG: amd-fix-arch
+      PLATFORM: linux/amd64
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build arch image
+      - name: Checkout (manual; instance served under /donach subpath)
         env:
-          IMAGE: steam-headless
-          TAG: amd-fix-arch
-          PLATFORM: linux/amd64
-          PUSH: 'false'
-        run: $NIX_CMD run .#build-arch
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          base="${GITHUB_SERVER_URL}"
+          case "${base}" in *git.bitp.cz*) base="${FORGEJO_BASE}" ;; esac
+          git init -q .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@${base#https://}/${GITHUB_REPOSITORY}.git"
+          git -c protocol.version=2 fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
+      - name: Build image (loads steam-headless:amd-fix-arch into local docker)
+        run: nix run .#build-arch
+
+      - name: Publish image tarball as a Forgejo generic package
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+        run: nix run .#publish

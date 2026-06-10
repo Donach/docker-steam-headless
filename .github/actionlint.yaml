@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # Custom self-hosted runner label used by build_nix.yml (NixOS build host).
+  labels:
+    - nix-shell-glcom

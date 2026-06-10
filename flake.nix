@@ -20,6 +20,8 @@
         coreutils
         gnused
         gawk
+        gzip
+        curl
       ];
 
       # Wrap `docker buildx build` for a given Dockerfile flavour.
@@ -51,6 +53,39 @@
             exec docker buildx "''${args[@]}" .
           '';
         };
+
+      # `docker save` the locally-built image and upload it as a Forgejo generic
+      # package. Used by the CI because the Forgejo container registry sits under
+      # the /donach subpath, which the Docker registry protocol cannot address.
+      # All inputs come from the environment (set by the workflow):
+      #   IMAGE TAG FLAVOUR FORGEJO_BASE PKG_OWNER PKG_NAME PKG_VERSION FORGEJO_TOKEN
+      mkPublishApp = pkgs:
+        pkgs.writeShellApplication {
+          name = "publish-image";
+          runtimeInputs = with pkgs; [ docker-client gzip curl coreutils ];
+          text = ''
+            image="''${IMAGE:?}"
+            tag="''${TAG:?}"
+            flavour="''${FLAVOUR:?}"
+            base="''${FORGEJO_BASE:?}"
+            owner="''${PKG_OWNER:?}"
+            pkg="''${PKG_NAME:?}"
+            version="''${PKG_VERSION:?}"
+            token="''${FORGEJO_TOKEN:?}"
+
+            file="''${pkg}-''${flavour}.tar.gz"
+            url="''${base}/api/v1/packages/''${owner}/generic/''${pkg}/''${version}/''${file}"
+
+            echo "Saving ''${image}:''${tag} -> ''${file}"
+            docker save "''${image}:''${tag}" | gzip > "''${file}"
+            ls -lh "''${file}"
+
+            # Overwrite any previous upload of this version/filename (idempotent re-runs)
+            curl -sS -X DELETE -H "Authorization: token ''${token}" "''${url}" || true
+            curl -sS -f -X PUT --upload-file "''${file}" -H "Authorization: token ''${token}" "''${url}"
+            echo "Published: ''${url}"
+          '';
+        };
     in
     {
       devShells = forAllSystems (pkgs: {
@@ -65,6 +100,7 @@
       packages = forAllSystems (pkgs: {
         build-debian = mkBuildApp pkgs "debian";
         build-arch = mkBuildApp pkgs "arch";
+        publish = mkPublishApp pkgs;
         default = mkBuildApp pkgs "debian";
       });
 
@@ -76,6 +112,10 @@
         build-arch = {
           type = "app";
           program = "${mkBuildApp pkgs "arch"}/bin/build-arch";
+        };
+        publish = {
+          type = "app";
+          program = "${mkPublishApp pkgs}/bin/publish-image";
         };
         default = {
           type = "app";
