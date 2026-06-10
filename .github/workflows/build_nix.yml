@@ -1,0 +1,49 @@
+name: Build Image (NixOS)
+
+# Builds both image flavours on a self-hosted NixOS runner using the toolchain
+# pinned by ./flake.nix. The flake provides docker/buildx/qemu; the runner host
+# provides the docker daemon.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['amd-gpu-support', 'master']
+
+env:
+  # Enable flakes regardless of the runner's nix.conf.
+  NIX_CMD: nix --extra-experimental-features "nix-command flakes"
+
+jobs:
+  build-nix-debian:
+    name: Build debian image (NixOS)
+    runs-on: nix-shell-glcom
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show pinned build environment
+        run: $NIX_CMD develop --command bash -c 'docker --version; docker buildx version'
+
+      - name: Build debian image
+        env:
+          IMAGE: steam-headless
+          TAG: amd-fix-debian
+          PLATFORM: linux/amd64
+          # Set PUSH=true (and log in to a registry beforehand) to publish.
+          PUSH: 'false'
+        run: $NIX_CMD run .#build-debian
+
+  build-nix-arch:
+    name: Build arch image (NixOS)
+    runs-on: nix-shell-glcom
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build arch image
+        env:
+          IMAGE: steam-headless
+          TAG: amd-fix-arch
+          PLATFORM: linux/amd64
+          PUSH: 'false'
+        run: $NIX_CMD run .#build-arch
