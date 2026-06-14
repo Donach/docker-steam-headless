@@ -59,7 +59,7 @@ jobs:
 
       - name: Publish image tarball as a Forgejo generic package
         env:
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          FORGEJO_TOKEN: ${{ secrets.CI_FORGEJO_TOKEN }}
         run: nix run .#publish
 
   build-nix-arch:
@@ -88,5 +88,5 @@ jobs:
 
       - name: Publish image tarball as a Forgejo generic package
         env:
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          FORGEJO_TOKEN: ${{ secrets.CI_FORGEJO_TOKEN }}
         run: nix run .#publish
