@@ -13,8 +13,6 @@
       # the flake pins the client tooling so the build env is reproducible.
       buildTools = pkgs: with pkgs; [
         docker-client
-        docker-buildx
-        qemu
         git
         bash
         coreutils
@@ -24,13 +22,18 @@
         curl
       ];
 
-      # Wrap `docker buildx build` for a given Dockerfile flavour.
-      # Overridable via env: IMAGE, TAG, PLATFORM, PUSH (true -> --push, else --load).
+      # Wrap `docker build` (BuildKit) for a given Dockerfile flavour.
+      # Plain `docker build` is used instead of `docker buildx`: the image is
+      # single-arch (linux/amd64) and loaded into the local daemon, so the
+      # buildx plugin (which nixpkgs ships as a separate, non-auto-registered
+      # binary) is not needed. Only the host docker socket is required.
+      # Overridable via env: IMAGE, TAG, PLATFORM, PUSH (true -> docker push).
       mkBuildApp = pkgs: flavour:
         pkgs.writeShellApplication {
           name = "build-${flavour}";
           runtimeInputs = buildTools pkgs;
           text = ''
+            export DOCKER_BUILDKIT=1
             flavour="${flavour}"
             image="''${IMAGE:-steam-headless}"
             tag="''${TAG:-amd-fix-''${flavour}}"
@@ -38,19 +41,16 @@
 
             echo "Building ''${image}:''${tag} from Dockerfile.''${flavour} (''${platform})"
 
-            args=(
-              build
-              --file "Dockerfile.''${flavour}"
-              --platform "''${platform}"
-              --tag "''${image}:''${tag}"
-              --pull
-            )
+            docker build \
+              --file "Dockerfile.''${flavour}" \
+              --platform "''${platform}" \
+              --tag "''${image}:''${tag}" \
+              --pull \
+              .
+
             if [ "''${PUSH:-false}" = "true" ]; then
-              args+=(--push)
-            else
-              args+=(--load)
+              docker push "''${image}:''${tag}"
             fi
-            exec docker buildx "''${args[@]}" .
           '';
         };
 
@@ -92,7 +92,7 @@
         default = pkgs.mkShell {
           packages = buildTools pkgs;
           shellHook = ''
-            echo "steam-headless build env ready. Run: docker buildx build -f Dockerfile.debian ."
+            echo "steam-headless build env ready. Run: nix run .#build-debian (or docker build -f Dockerfile.debian .)"
           '';
         };
       });

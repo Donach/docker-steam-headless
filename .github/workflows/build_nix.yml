@@ -51,8 +51,8 @@ jobs:
           git -c protocol.version=2 fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout -q FETCH_HEAD
 
-      - name: Show pinned build environment
-        run: nix develop --command bash -c 'docker --version; docker buildx version'
+      - name: Show pinned build environment (also verifies docker.sock access)
+        run: nix develop --command bash -c 'docker --version; docker info --format "daemon {{.ServerVersion}}"'
 
       - name: Build image (loads steam-headless:amd-fix-debian into local docker)
         run: nix run .#build-debian
