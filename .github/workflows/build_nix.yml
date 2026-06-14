@@ -8,7 +8,7 @@ name: Build Image (NixOS)
 #
 # Pull on the target host (e.g. Unraid):
 #   curl -fSL -H "Authorization: token <TOKEN>" \
-#     https://git.bitp.cz/donach/api/v1/packages/donach/generic/steam-headless/amd-fix/steam-headless-debian.tar.gz \
+#     https://git.bitp.cz/donach/api/packages/donach/generic/steam-headless/amd-fix/steam-headless-debian.tar.gz \
 #     | gunzip | docker load
 
 on:

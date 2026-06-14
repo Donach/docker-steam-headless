@@ -74,7 +74,7 @@
             token="''${FORGEJO_TOKEN:?}"
 
             file="''${pkg}-''${flavour}.tar.gz"
-            url="''${base}/api/v1/packages/''${owner}/generic/''${pkg}/''${version}/''${file}"
+            url="''${base}/api/packages/''${owner}/generic/''${pkg}/''${version}/''${file}"
 
             echo "Saving ''${image}:''${tag} -> ''${file}"
             docker save "''${image}:''${tag}" | gzip > "''${file}"
