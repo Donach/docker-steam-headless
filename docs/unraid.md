@@ -29,7 +29,35 @@ In order for it to do this you need to have either the Nvidia-Driver or Radeon-T
 
 1. Install the [Radeon-Top Plugin](https://forums.unraid.net/topic/92865-support-ich777-amd-vendor-reset-coraltpu-hpsahba/) by [ich777](https://forums.unraid.net/profile/72388-ich777/).
 ![](./images/unraid-amd-plugin.png)
-2. Profit
+2. Pass **both** DRI nodes to the container and grant access to the `card*` device group.
+   In *Extra Parameters* add (replace `18` with the GID reported by `stat -c '%g' /dev/dri/card0` on the host):
+   ```
+   --device=/dev/dri/card0 --device=/dev/dri/renderD128 --group-add 18
+   ```
+   The `card0` node is group-owned and not world-readable; without the matching `--group-add`
+   the container user cannot open it and the X server silently falls back to software (llvmpipe).
+3. Profit
+
+#### AMD Vulkan / Xorg tuning
+
+The Mesa install also ships the **lavapipe** software Vulkan driver. Some engines (notably
+Unreal Engine 5 games) enumerate Vulkan devices and pick the CPU device, then crash on startup
+with `EXCEPTION_ACCESS_VIOLATION reading address 0x0`. The container now disables the lavapipe
+ICD on AMD by default so only the hardware RADV device is visible.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AMD_FORCE_RADV_ICD` | `true` | Disable the lavapipe (software) Vulkan ICD so games always use the RADV hardware device. Set `false` to keep the CPU fallback. |
+| `AMD_HW_XORG` | `false` | Run a real `amdgpu` X server instead of the software dummy driver when no monitor is connected. Gives hardware OpenGL on the desktop (`glxinfo` reports `radeonsi`, not `llvmpipe`). |
+
+> __Headless note__
+>
+> A disconnected GPU output cannot light up on its own, so `AMD_HW_XORG=true` needs a display
+> the GPU believes is attached. Either plug in a cheap HDMI/DisplayPort dummy adapter, **or**
+> force a mode on the connector from the Unraid kernel cmdline (Main → Flash → Syslinux config),
+> e.g. `video=DP-1:1920x1080e`, then reboot. Alternatively set `AMD_CUSTOM_EDID` to an EDID blob
+> and `DISPLAY_VIDEO_PORT` to the connector name to inject an EDID via the driver. If the amdgpu
+> server cannot start it falls back to the dummy config, so this is safe to try.
 
 
 ## ADDING CONTROLLER SUPPORT:

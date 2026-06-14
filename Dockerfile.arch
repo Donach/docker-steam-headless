@@ -155,7 +155,9 @@ ENV \
     XORG_SOCKET_DIR="/tmp/.X11-unix" \
     XDG_RUNTIME_DIR="/tmp/.X11-unix/run" \
     XDG_SESSION_TYPE="x11" \
-    FORCE_X11_DUMMY_CONFIG="false"
+    FORCE_X11_DUMMY_CONFIG="false" \
+    AMD_HW_XORG="false" \
+    AMD_FORCE_RADV_ICD="true"
 RUN \
     echo "**** Install X Server requirements ****" \
 	    && pacman -Syu --noconfirm --needed \
@@ -283,8 +285,11 @@ RUN \
         && echo '<!DOCTYPE html>' > /opt/frontend/index.html \
         && echo '<html><head><meta http-equiv="refresh" content="0;url=./web/"></head><body><p>If you are not redirected, <a href="./web/">click here</a>.</p></body></html>' >> /opt/frontend/index.html \
         && chmod -R 755 /opt/frontend \
-        && convert /opt/frontend/web/images/icons/novnc-ios-180.png -resize "128x128" /tmp/steam-headless.png \
-        && xdg-icon-resource install --novendor --size 128 /tmp/steam-headless.png \
+        && { _im="$(command -v magick || command -v convert || true)"; \
+             if [ -n "${_im}" ]; then \
+                 "${_im}" /opt/frontend/web/images/icons/novnc-ios-180.png -resize "128x128" /tmp/steam-headless.png \
+                     && xdg-icon-resource install --novendor --size 128 /tmp/steam-headless.png; \
+             else echo "**** WARN: ImageMagick CLI (magick/convert) not found; skipping desktop icon ****"; fi; } \
     && \
     echo "**** Section cleanup ****" \
         && rm -f /tmp/steam-headless.png

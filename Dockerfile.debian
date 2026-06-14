@@ -151,7 +151,9 @@ ENV \
     XORG_SOCKET_DIR="/tmp/.X11-unix" \
     XDG_RUNTIME_DIR="/tmp/.X11-unix/run" \
     XDG_SESSION_TYPE="x11" \
-    FORCE_X11_DUMMY_CONFIG="false"
+    FORCE_X11_DUMMY_CONFIG="false" \
+    AMD_HW_XORG="false" \
+    AMD_FORCE_RADV_ICD="true"
 RUN \
     echo "**** Update apt database ****" \
         && apt-get update \
@@ -314,7 +316,7 @@ RUN \
     echo
 
 # Install Web Frontend
-ARG NODE_VERSION="v20"
+ARG NODE_VERSION="v24"
 ARG FRONTEND_VERSION=a8eb92f
 RUN \
     echo "**** Install Node ${NODE_VERSION} ****" \
@@ -343,8 +345,11 @@ RUN \
         && echo '<!DOCTYPE html>' > /opt/frontend/index.html \
         && echo '<html><head><meta http-equiv="refresh" content="0;url=./web/"></head><body><p>If you are not redirected, <a href="./web/">click here</a>.</p></body></html>' >> /opt/frontend/index.html \
         && chmod -R 755 /opt/frontend \
-        && convert /opt/frontend/web/images/icons/novnc-ios-180.png -resize "128x128" /tmp/steam-headless.png \
-        && xdg-icon-resource install --novendor --size 128 /tmp/steam-headless.png \
+        && { _im="$(command -v magick || command -v convert || true)"; \
+             if [ -n "${_im}" ]; then \
+                 "${_im}" /opt/frontend/web/images/icons/novnc-ios-180.png -resize "128x128" /tmp/steam-headless.png \
+                     && xdg-icon-resource install --novendor --size 128 /tmp/steam-headless.png; \
+             else echo "**** WARN: ImageMagick CLI (magick/convert) not found; skipping desktop icon ****"; fi; } \
     && \
     echo "**** Section cleanup ****" \
         && rm -f /tmp/steam-headless.png
@@ -499,10 +504,10 @@ RUN \
             va-driver-all \
     && \
     echo "**** Download latest Sunshine release ****" \
-        && SUNSHINE_RELEASE=$(curl -sX GET "https://api.github.com/repos/LizardByte/Sunshine/releases/latest" | jq -r '.tag_name') \
-        && SUNSHINE_URL=$(curl -sX GET "https://api.github.com/repos/LizardByte/Sunshine/releases/latest" | jq -r '.assets[] | select(.name | contains("sunshine-debian-trixie-amd64.deb")) | .browser_download_url') \
-        && echo "Downloading Sunshine ${SUNSHINE_RELEASE} from ${SUNSHINE_URL}" \
-        && wget -O /usr/src/sunshine.deb "${SUNSHINE_URL}" \
+        # Use GitHub's latest/download redirect instead of the rate-limited
+        # unauthenticated API (which returned null assets and broke jq).
+        && wget --content-disposition -O /usr/src/sunshine.deb \
+            "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-debian-trixie-amd64.deb" \
     && \
     echo "**** Install Sunshine ****" \
         && apt-get install -y \
